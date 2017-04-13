@@ -1,0 +1,11 @@
+						***** README ***** 
+
+1.We have assumed that for lw and sw memory address is multiple of 32
+2.We have assumed that for lb and sb memory address is multiple of 8
+3.We have assumed memory size=64 MB(approx)
+4.We have predicted no branch in all cases and if branch occurs then we flush the two inline instructions thus creating stall 
+for 2 cycles and then read instruction from the instruction memory
+5.We have assumed all calculations on integer as signed unless specified otherwise.
+6.We have assumed that the instruction in case the program does not come to a hault but the instrcutions have finished (like in the case of a branch at the end), we still consider the processor tries to access the instructions and included those in the Instruction Cache Access Count.
+7.We have put a third data forwarding path as well (not mentioned in the book) to take of store followed by add with a data dependency. 
+8.We have highlighted all the control signals in a relevant pipeline stage (As mentioned on Piazza).
