@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include "draw.h"
 
 #define MEMSIZE 16000000 
 #define INSTSIZE 16000
@@ -26,7 +27,7 @@ bool stallIfId = false;
 int regMem[32][32];
 int dataMem[MEMSIZE][32];
 int Hi[32]; int Lo[32]; // 2 special registers for mul and mla
-int Pc[32];
+
 // forward signal
 int fwdA, fwdB,fwdC; // 1 for memory //2 for aluresult
 pthread_t callThd[6];
@@ -349,7 +350,7 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		ex->regdst=1;
 		ex->aluop[0]=0;
 		ex->aluop[1]=1;
-		}
+	}
 
 	else if(k==15){
 		memo->branchmem=0; //for lui
@@ -477,7 +478,7 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		ex->aluop[0]=1;
 		ex->aluop[1]=0;
 	}
-    else if(k==2){//for jump
+    else if(k==2){ //for jump
     	memo->branchmem=1;
     	memo->memre=0;
 		memo->memwr=0;
@@ -496,7 +497,6 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		wbo->regwr=0;
 		ex->alusrc=0;
 		ex->regdst=0;
-		//ex->link=1;
 		ex->aluop[0]=9;
 		ex->aluop[1]=8;	
 	}
@@ -728,7 +728,7 @@ void Alu_control(int func[6],int aluop[2],int alucontrol[4])//check aluopbits an
 		{
 			alucontrol[3]=0;alucontrol[2]=0;alucontrol[1]=0;alucontrol[0]=3;         //0003 for sllv
 		}
-		else if(binary_to_int2(func)==28)
+		else if(binary_to_int2(func)==18)
 		{
 			alucontrol[3]=1;alucontrol[2]=5;alucontrol[1]=9;alucontrol[0]=3;       //1593 for mflo
 		}
@@ -736,7 +736,7 @@ void Alu_control(int func[6],int aluop[2],int alucontrol[4])//check aluopbits an
 			alucontrol[3]=7;alucontrol[2]=7;alucontrol[1]=7;alucontrol[0]=7;       //7777 for jalr
 		}
 		else if(binary_to_int2(func)==8){
-			alucontrol[3]=7;alucontrol[2]=7;alucontrol[1]=7;alucontrol[0]=7;       //8888 for jalr
+			alucontrol[3]=7;alucontrol[2]=7;alucontrol[1]=7;alucontrol[0]=7;       //7777 for jump register
 		}
 		else {
 			printf("Error:Invalid Instruction.\n");
@@ -1057,7 +1057,7 @@ void ALU(int next_ins[32],int ins[32],int op1[32],int op2[32],int ctr[4],int res
 	else if(ctr[3]==1 && ctr[2]==5 && ctr[1]==9 && ctr[0]==3){//mflo
 		copy_oper(Lo,result);
 	}
-	else if(ctr[3]==6 && ctr[2]==6 && ctr[1]==6 && ctr[0]==6){//j
+	else if(ctr[3]==6 && ctr[2]==6 && ctr[1]==6 && ctr[0]==6){//jump
 		int i;
 		for( i=0;i<26;i++){
 			result[i]=ins[i];
@@ -1066,10 +1066,9 @@ void ALU(int next_ins[32],int ins[32],int op1[32],int op2[32],int ctr[4],int res
 		for( j=26;j<32;j++){
 			result[j]=0;
 		}
-		*zero=1;
-		
+		(*zero)=1;		
 	}
-	else if(ctr[3]==6 && ctr[2]==6 && ctr[1]==6 && ctr[0]==7){//jal
+	else if(ctr[3]==6 && ctr[2]==6 && ctr[1]==6 && ctr[0]==7){//jump and link
 		int i;
 		for( i=0;i<26;i++){
 			result[i]=ins[i];
@@ -1079,12 +1078,11 @@ void ALU(int next_ins[32],int ins[32],int op1[32],int op2[32],int ctr[4],int res
 			result[j]=0;
 		}
 		*zero=1;
-		copy_oper(next_ins,Pc);
+		copy_oper(next_ins,regMem[31]);
 	}
 	else if(ctr[3]==7 && ctr[2]==7 && ctr[1]==7 && ctr[0]==7){//jalr && jr
 		copy_oper(op1,result);
-		*zero=1;
-		
+		*zero=1;		
 	}
 	
 }
@@ -1107,7 +1105,6 @@ void* exstage(void *x ){
 	copy_oper(regidex.instruction1,regexmem.instruction2);	
 	
 
-	regexmem.pcadd2= regidex.pc1 + binary_to_int(regidex.constantext1); //take care of offset
 	int aluctr[4]; // tells the type of instruction in Siddhant's Rules of Nomenclature
 	int fun[6]; // in instruction set style.
 	first6(regidex.instruction1,fun);
@@ -1145,9 +1142,12 @@ void* exstage(void *x ){
 		copy_oper(regexmem.aluresult1,final_op1); 
 	}
 
-	
 	int i;
-	ALU(regidex.instruction2,regidex.instruction1,final_op1,final_op2,aluctr,regexmem.aluresult2, &(regexmem.zero2)) ;
+	ALU(regifid.instruction1,regidex.instruction1,final_op1,final_op2,aluctr,regexmem.aluresult2, &(regexmem.zero2)) ;
+	if((aluctr[3]==6 && aluctr[2]==6 && aluctr[1]==6 && aluctr[0]==6)|| (aluctr[3]==6 && aluctr[2]==6 && aluctr[1]==6 && aluctr[0]==7)|| (aluctr[3]==7 && aluctr[2]==7 && aluctr[1]==7 && aluctr[0]==7)){
+		regexmem.pcadd2 = binary_to_int(regexmem.aluresult2); //jump variations
+	}
+	else{ regexmem.pcadd2= regidex.pc1 + binary_to_int(regidex.constantext1);} //take care of offset
 	copy_oper(op2,regexmem.memwritedata2); // for str
 	
 	
@@ -1269,16 +1269,16 @@ void* wbstage(void *x ){//thread calls for write back
 	if(regmemwb.wb1.regwr == 1){
 		int k;int opp[6];
 		for(k=0;k<6;k++)
-	{
-		opp[k]=regmemwb.instruction1[26+k];
-	}	
+		{
+			opp[k]=regmemwb.instruction1[26+k];
+		}	
 		int fun[6]; 
 		first6(regmemwb.instruction1,fun);
-		if(bin6_to_int(opp)==0 && binary_to_int2(fun)==9){
-		register_write(bin5_to_int(regmemwb.regwriteaddr1),regmemwb.instruction2);
+		if(bin6_to_int(opp)==0 && bin6_to_int(fun)==9){
+			register_write(bin5_to_int(regmemwb.regwriteaddr1),regexmem.instruction1);
 		}
 		else{
-		register_write(bin5_to_int(regmemwb.regwriteaddr1),opglobal);
+			register_write(bin5_to_int(regmemwb.regwriteaddr1),opglobal);
 		}
 	}
 }
@@ -1463,11 +1463,11 @@ void initialize(){
 	stallIfId= false;
 }
 
-/*void* updateSVG(void* ptr){
+void* updateSVG(void* ptr){
 	FILE* svgfp = fopen(image_file, "w");
 	draw(svgfp,!stallIfId && (regifid.pc2 < numofinstructions),!regifid.nop1,!regidex.nop1,!regexmem.nop1,!regmemwb.nop1, regexmem.m1.memre, regexmem.m1.memwr,binary_to_int(regifid.instruction2),binary_to_int(regifid.instruction1),binary_to_int(regidex.instruction1),binary_to_int(regexmem.instruction1),binary_to_int(regmemwb.instruction1));
 	fclose(svgfp);
-}*/
+}
 
 int processor(){
 	//pending writes in pipeline registers
@@ -1477,13 +1477,13 @@ int processor(){
 	pendingWrites();
 	controlhazardcalculate();
 
-	 wbstage(NULL);
-	 ifstage(NULL);
-	 idstage(NULL);
-	 exstage(NULL);
-	 memstage(NULL);
+	 // wbstage(NULL);
+	 // ifstage(NULL);
+	 // idstage(NULL);
+	 // exstage(NULL);
+	 // memstage(NULL);
 
-	/*pthread_attr_t attr;
+	pthread_attr_t attr;
 	void *status;
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
@@ -1507,7 +1507,7 @@ int processor(){
   	}
 	pthread_create(&callThd[5], &attr1, updateSVG, NULL);
 	pthread_join(callThd[5], &status);
-  	*/
+  	
 }
 
 void print_alu(alu a){
@@ -1821,9 +1821,9 @@ void goProcessor(){
 			processor();
 			numOfCycles++;
 		}
-		else if(strcmp(str, strBrk)==0){
-			scanf("0x%x",&brkaddr);
-		}
+		// else if(strcmp(str, strBrk)==0){
+		// 	scanf("0x%x",&brkaddr);
+		// }
 		else if(strcmp(str, strDel)==0){
 			int brdel;
 			scanf("0x%x",&brdel);	
