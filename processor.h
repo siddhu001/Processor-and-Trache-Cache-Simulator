@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include "draw.h"
 
 #define MEMSIZE 16000000 
 #define INSTSIZE 16000
@@ -19,6 +18,7 @@ int numOfCycles=0;
 int numOfDataStalls = 0;
 int numOfControlStalls = 0;
 int memAccess=0;
+int excessCount= 0; // for if stage fetching instructions beyond numofinstructions
 
 int opglobal[32];//global variable to store output of multiplexer in write back 
 bool stallIfId = false;
@@ -26,7 +26,7 @@ bool stallIfId = false;
 int regMem[32][32];
 int dataMem[MEMSIZE][32];
 int Hi[32]; int Lo[32]; // 2 special registers for mul and mla
-
+int Pc[32];
 // forward signal
 int fwdA, fwdB,fwdC; // 1 for memory //2 for aluresult
 pthread_t callThd[6];
@@ -48,7 +48,8 @@ int dataMemoryIndex(int offset){
 typedef struct{
 	int aluop[2];
 	int alusrc;
-	int regdst;	
+	int regdst;
+	//int link=0;	
 } alu;
 
 typedef struct {
@@ -265,6 +266,7 @@ void* ifstage(void *x ){ //thread calls this function for if
 		pcx = regexmem.pcadd1; 
 	}
 	else pcx = regifid.pc1;
+	if (pcx >= numofinstructions) excessCount++;
 	for(i=0; i<32; i++) regifid.instruction2[i] = instMem[pcx][i];
 	regifid.pc2= pcx + 1;
 	if (pcx >= numofinstructions) regifid.nop2= true;
@@ -322,16 +324,22 @@ int binary_to_int2(int a[6]);
 
 void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 {
-	// add & mul: 01 ; mla:11 ; ldr, str :00 ; branch equal: 10 ori:33 slti:12 bge,blt:20 bgt:30 bleq=40 lui:50
+	// add & mul & mov: 01 ; mla:11 ; ldr, str :00 ; branch equal: 10 ori:33 slti:12 bge,blt:20 bgt:30 bleq=40 lui:50
 	int k= bin6_to_int(ins);
 	if(k==0){ // for add,sub, (including mul) etc.
-		memo->branchmem=0;
+		int fun[6]; 
+		first6(ins1,fun);
+		if(binary_to_int2(fun)==9 || binary_to_int2(fun)==8){
+			memo->branchmem=1;
+			//ex->link=1;
+		}
+		else{
+			memo->branchmem=0;
+		}	
 		memo->memre=0;
 		memo->memwr=0;
 		wbo->mem2r=0;
-		int fun[6]; 
-		first6(ins1,fun);
-		if(binary_to_int2(fun)==24){ // mul
+		if(binary_to_int2(fun)==24 || binary_to_int2(fun)==8){ // mul
 			wbo->regwr=0;
 		}
 		else{ // not mult
@@ -341,7 +349,7 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		ex->regdst=1;
 		ex->aluop[0]=0;
 		ex->aluop[1]=1;
-	}
+		}
 
 	else if(k==15){
 		memo->branchmem=0; //for lui
@@ -469,7 +477,29 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		ex->aluop[0]=1;
 		ex->aluop[1]=0;
 	}
-
+    else if(k==2){//for jump
+    	memo->branchmem=1;
+    	memo->memre=0;
+		memo->memwr=0;
+		wbo->mem2r=0;
+		wbo->regwr=0;
+		ex->alusrc=0;
+		ex->regdst=0;
+		ex->aluop[0]=9;
+		ex->aluop[1]=7;
+	}
+	else if(k==3){//for jump and link
+		memo->branchmem=1;
+    	memo->memre=0;
+		memo->memwr=0;
+		wbo->mem2r=0;
+		wbo->regwr=0;
+		ex->alusrc=0;
+		ex->regdst=0;
+		//ex->link=1;
+		ex->aluop[0]=9;
+		ex->aluop[1]=8;	
+	}
 	else if(k==8){    //add immediate
 		memo->branchmem=0;
 		memo->memre=0;
@@ -698,6 +728,16 @@ void Alu_control(int func[6],int aluop[2],int alucontrol[4])//check aluopbits an
 		{
 			alucontrol[3]=0;alucontrol[2]=0;alucontrol[1]=0;alucontrol[0]=3;         //0003 for sllv
 		}
+		else if(binary_to_int2(func)==28)
+		{
+			alucontrol[3]=1;alucontrol[2]=5;alucontrol[1]=9;alucontrol[0]=3;       //1593 for mflo
+		}
+		else if(binary_to_int2(func)==9){
+			alucontrol[3]=7;alucontrol[2]=7;alucontrol[1]=7;alucontrol[0]=7;       //7777 for jalr
+		}
+		else if(binary_to_int2(func)==8){
+			alucontrol[3]=7;alucontrol[2]=7;alucontrol[1]=7;alucontrol[0]=7;       //8888 for jalr
+		}
 		else {
 			printf("Error:Invalid Instruction.\n");
 			exit(0);
@@ -736,6 +776,13 @@ void Alu_control(int func[6],int aluop[2],int alucontrol[4])//check aluopbits an
 	else if(aluop[0]==5 && aluop[1]==0){
 	    alucontrol[3]=5;alucontrol[2]=5;alucontrol[1]=5;alucontrol[0]=5; //5555 for LUI	
 	}
+    else if(aluop[0]==9 && aluop[1]==7){
+    	alucontrol[3]=6;alucontrol[2]=6;alucontrol[1]=6;alucontrol[0]=6; //6666 for jump
+	}
+	else if(aluop[0]==9 && aluop[1]==8){
+    	alucontrol[3]=6;alucontrol[2]=6;alucontrol[1]=6;alucontrol[0]=7; //6667 for jump and link
+	}
+		
 }
 
 void first6(int a[32],int b[6])//stores first 6 bit of a in b
@@ -861,7 +908,7 @@ void shift(int a[32],int result[32],int shift){ // left shift a by shift amount 
 	}
 }
 
-void ALU(int ins[32],int op1[32],int op2[32],int ctr[4],int result[32],int* zero ){
+void ALU(int next_ins[32],int ins[32],int op1[32],int op2[32],int ctr[4],int result[32],int* zero ){
 	*zero = 0;
 	if(ctr[3]==0 && ctr[2]==0 && ctr[1]==1 && ctr[0]==0)//add signed a and b
 	{
@@ -1007,6 +1054,39 @@ void ALU(int ins[32],int op1[32],int op2[32],int ctr[4],int result[32],int* zero
 			result[i]=op2[i-16];
 		}
 	}
+	else if(ctr[3]==1 && ctr[2]==5 && ctr[1]==9 && ctr[0]==3){//mflo
+		copy_oper(Lo,result);
+	}
+	else if(ctr[3]==6 && ctr[2]==6 && ctr[1]==6 && ctr[0]==6){//j
+		int i;
+		for( i=0;i<26;i++){
+			result[i]=ins[i];
+		}
+		int j;
+		for( j=26;j<32;j++){
+			result[j]=0;
+		}
+		*zero=1;
+		
+	}
+	else if(ctr[3]==6 && ctr[2]==6 && ctr[1]==6 && ctr[0]==7){//jal
+		int i;
+		for( i=0;i<26;i++){
+			result[i]=ins[i];
+		}
+		int j;
+		for(j=26;j<32;j++){
+			result[j]=0;
+		}
+		*zero=1;
+		copy_oper(next_ins,Pc);
+	}
+	else if(ctr[3]==7 && ctr[2]==7 && ctr[1]==7 && ctr[0]==7){//jalr && jr
+		copy_oper(op1,result);
+		*zero=1;
+		
+	}
+	
 }
  
 void* exstage(void *x ){
@@ -1067,9 +1147,10 @@ void* exstage(void *x ){
 
 	
 	int i;
-	ALU(regidex.instruction1,final_op1,final_op2,aluctr,regexmem.aluresult2, &(regexmem.zero2)) ;
+	ALU(regidex.instruction2,regidex.instruction1,final_op1,final_op2,aluctr,regexmem.aluresult2, &(regexmem.zero2)) ;
 	copy_oper(op2,regexmem.memwritedata2); // for str
-
+	
+	
 	if(regidex.ex1.regdst==0){ // if you want to store in register rt1 (for ldr , str) or rd1 (for add, sub)
 		copy_reg(regidex.rt1,regexmem.regwriteaddr2);
 	}
@@ -1186,7 +1267,19 @@ void* wbstage(void *x ){//thread calls for write back
 	}
 	
 	if(regmemwb.wb1.regwr == 1){
+		int k;int opp[6];
+		for(k=0;k<6;k++)
+	{
+		opp[k]=regmemwb.instruction1[26+k];
+	}	
+		int fun[6]; 
+		first6(regmemwb.instruction1,fun);
+		if(bin6_to_int(opp)==0 && binary_to_int2(fun)==9){
+		register_write(bin5_to_int(regmemwb.regwriteaddr1),regmemwb.instruction2);
+		}
+		else{
 		register_write(bin5_to_int(regmemwb.regwriteaddr1),opglobal);
+		}
 	}
 }
 
@@ -1370,11 +1463,11 @@ void initialize(){
 	stallIfId= false;
 }
 
-void* updateSVG(void* ptr){
+/*void* updateSVG(void* ptr){
 	FILE* svgfp = fopen(image_file, "w");
 	draw(svgfp,!stallIfId && (regifid.pc2 < numofinstructions),!regifid.nop1,!regidex.nop1,!regexmem.nop1,!regmemwb.nop1, regexmem.m1.memre, regexmem.m1.memwr,binary_to_int(regifid.instruction2),binary_to_int(regifid.instruction1),binary_to_int(regidex.instruction1),binary_to_int(regexmem.instruction1),binary_to_int(regmemwb.instruction1));
 	fclose(svgfp);
-}
+}*/
 
 int processor(){
 	//pending writes in pipeline registers
@@ -1384,13 +1477,13 @@ int processor(){
 	pendingWrites();
 	controlhazardcalculate();
 
-	// wbstage(NULL);
-	// ifstage(NULL);
-	// idstage(NULL);
-	// exstage(NULL);
-	// memstage(NULL);
+	 wbstage(NULL);
+	 ifstage(NULL);
+	 idstage(NULL);
+	 exstage(NULL);
+	 memstage(NULL);
 
-	pthread_attr_t attr;
+	/*pthread_attr_t attr;
 	void *status;
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
@@ -1414,7 +1507,7 @@ int processor(){
   	}
 	pthread_create(&callThd[5], &attr1, updateSVG, NULL);
 	pthread_join(callThd[5], &status);
-  	
+  	*/
 }
 
 void print_alu(alu a){
@@ -1684,6 +1777,7 @@ int instMemAnswer(int index){
 
 void printResults(){
 	numOfCycles--;
+	excessCount-=5; // removing the last instruction excess
 	int idleCycles = numOfDataStalls + numOfControlStalls + STALLOFFSET;
 	int instAccess = numOfCycles - numOfDataStalls - STALLOFFSET; // 4-> for ending stalls
 	int numofinstructions1= instAccess - numOfControlStalls;
@@ -1696,7 +1790,7 @@ void printResults(){
 	if (idleCycles%2==0) fprintf(resfp,"Idle time (ns),%d\n",idleCycles/2);
 	else fprintf(resfp,"Idle time (ns),%.4f\n",0.5*idleCycles);
 	fprintf(resfp,"Idle time (%%),%.4f%%\n", (idleCycles*100.0) /numOfCycles);
-	fprintf(resfp,"Cache Summary\nCache L1-I\nnum cache accesses,%d\nCache L1-D\nnum cache accesses,%d\n",instAccess, memAccess);
+	fprintf(resfp,"Cache Summary\nCache L1-I\nnum cache accesses,%d\nCache L1-D\nnum cache accesses,%d\n",instAccess- excessCount, memAccess);
 	fclose(resfp);
 }
 
@@ -1708,9 +1802,13 @@ void goProcessor(){
 	int_to_bin32(0,dataMem[6]);
 	int_to_bin32(-17,regMem[11]);*/
 	char str[50];
+	int *brkaddr;
 	char* strStep= "step";
 	char* strMem= "memdump";
 	char* strReg= "regdump";
+	char* strBrk= "break";
+	char* strDel= "delete";  
+	char* strCon= "continue"; 
 	int i,j;
 	while(true){
 		scanf (" %s", str);
@@ -1722,6 +1820,13 @@ void goProcessor(){
 			}
 			processor();
 			numOfCycles++;
+		}
+		else if(strcmp(str, strBrk)==0){
+			scanf("0x%x",&brkaddr);
+		}
+		else if(strcmp(str, strDel)==0){
+			int brdel;
+			scanf("0x%x",&brdel);	
 		}
 		else if (strcmp(str, strMem) == 0){
 			printf("MemDump:\n");
