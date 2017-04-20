@@ -45,6 +45,17 @@ int dataMemoryIndex(int offset){
 	return idx; 
 }
 
+int instrMemoryIndex(int idx1){
+	int val = 1048576;
+	if (idx1 < val){
+		printf("Invalid Instruction Address. %d\n", idx1);
+		exit(0);
+	}
+	else {
+		return (idx1 -val);
+	}
+}
+
 // we wil call thread only if instruction is valid
 typedef struct{
 	int aluop[2];
@@ -122,6 +133,9 @@ struct exmemst{
 	int pcadd1;
 	int pcadd2;
 	
+	int pc1;
+	int pc2;
+
 	int zero1;
 	int zero2;
 	int aluresult1[32];
@@ -333,6 +347,7 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		if(binary_to_int2(fun)==9 || binary_to_int2(fun)==8){
 			memo->branchmem=1;
 			//ex->link=1;
+			printf("here-1\n");
 		}
 		else{
 			memo->branchmem=0;
@@ -342,6 +357,8 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		wbo->mem2r=0;
 		if(binary_to_int2(fun)==24 || binary_to_int2(fun)==8){ // mul
 			wbo->regwr=0;
+			printf("here-1.1\n");
+
 		}
 		else{ // not mult
 			wbo->regwr=1;
@@ -537,7 +554,7 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 	}
 
 	else {
-		printf("Error:Invalid Instruction.\n");
+		printf("Error::Invalid Instruction. %x\n" , binary_to_int(ins1));
 		exit(0);
 	}
 }
@@ -628,7 +645,8 @@ void* idstage(void *x ){	//thread calls this function in idstage
 	int op1[5];
 	instruction_to_register(regifid.instruction1,op1,21); // puts 21 to 25 in op1
 	copy_register_value(regidex.operanda2,bin5_to_int(op1)); // fetches values from reg file
-	
+	printf("ins:%x op:%x, %x \n", binary_to_int(regifid.instruction1),bin5_to_int(op1),binary_to_int(regidex.operanda2));
+
 	int op2[5];
 	instruction_to_register(regifid.instruction1,op2,16);//puts 16 to 20 in op2
 	copy_register_value(regidex.operandb2,bin5_to_int(op2));//fetches value from reg file
@@ -645,6 +663,7 @@ void* idstage(void *x ){	//thread calls this function in idstage
 	int op4[5];
 	instruction_to_register(regifid.instruction1,op4,11);
 	copy_reg(op4,regidex.rd2);
+	// printf("..%x %x\n", bin5_to_int(regidex.rd2),bin5_to_int(op4) );
 }
 
 void memory_equal(mem* s1,mem* s2)//make mem1 =mem2
@@ -698,6 +717,10 @@ void Alu_control(int func[6],int aluop[2],int alucontrol[4])//check aluopbits an
 		{
 			alucontrol[3]=0;alucontrol[2]=0;alucontrol[1]=1;alucontrol[0]=0;          //0010 for add
 		}
+		else if(binary_to_int2(func)==33){
+			// printf("here1\n");
+			alucontrol[3]=7;alucontrol[2]=9;alucontrol[1]=0;alucontrol[0]=0;          //7900 for and
+		}
 		else if(binary_to_int2(func)==36){
 			alucontrol[3]=0;alucontrol[2]=0;alucontrol[1]=0;alucontrol[0]=0;          //0000 for and
 		}
@@ -737,9 +760,10 @@ void Alu_control(int func[6],int aluop[2],int alucontrol[4])//check aluopbits an
 		}
 		else if(binary_to_int2(func)==8){
 			alucontrol[3]=7;alucontrol[2]=7;alucontrol[1]=7;alucontrol[0]=7;       //7777 for jump register
+			printf("here-3\n");
 		}
 		else {
-			printf("Error:Invalid Instruction.\n");
+			printf("Error:Invalid Instruction. %d\n",binary_to_int2(func));
 			exit(0);
 		}
 	}
@@ -908,14 +932,20 @@ void shift(int a[32],int result[32],int shift){ // left shift a by shift amount 
 	}
 }
 
-void ALU(int next_ins[32],int ins[32],int op1[32],int op2[32],int ctr[4],int result[32],int* zero ){
+void ALU(int next_ins_addr,int ins[32],int op1[32],int op2[32],int ctr[4],int result[32],int* zero ){
 	*zero = 0;
 	if(ctr[3]==0 && ctr[2]==0 && ctr[1]==1 && ctr[0]==0)//add signed a and b
 	{
 		int k1=bin32_to_int_signed(op1);
 		int k2=bin32_to_int_signed(op2);
 		int_signed_to_bit32(k1+k2,result);
-		}	
+		}
+	else if (ctr[3]==7 && ctr[2]==9 && ctr[1]==0 && ctr[0]==0){
+		int k1= binary_to_int(op1);
+		int k2= binary_to_int(op2);
+		int_to_bin32(k1+k2, result);
+		// printf("here2 %x\n",binary_to_int(result));
+	}	
 	else if(ctr[3]==0 && ctr[2]==0 && ctr[1]==0 && ctr[0]==0)//and op1 and op2
 	{
 		int q;
@@ -1078,18 +1108,26 @@ void ALU(int next_ins[32],int ins[32],int op1[32],int op2[32],int ctr[4],int res
 			result[j]=0;
 		}
 		*zero=1;
-		copy_oper(next_ins,regMem[31]);
+		int temp[32];
+		int_to_bin32((next_ins_addr+ 1048576)*4, temp);
+		copy_oper( temp,regMem[31]);
 	}
 	else if(ctr[3]==7 && ctr[2]==7 && ctr[1]==7 && ctr[0]==7){//jalr && jr
-		copy_oper(op1,result);
-		*zero=1;		
+		int temp[32];
+		int_to_bin32(binary_to_int(op1)/4,temp);
+		copy_oper(temp,result);
+		*zero=1;
+		printf("op1 %x  result %x\n", binary_to_int(op1), binary_to_int(result));
 	}
 	
 }
  
 void* exstage(void *x ){
+	printf("ins:%x\n", binary_to_int(regidex.instruction1));
 
 	regexmem.nop2= regidex.nop1;
+	regexmem.pc2= regidex.pc1;
+
 	if (regidex.nop1==true){
 		regexmem.m2.branchmem = 0;
 		regexmem.m2.memre = 0;
@@ -1143,11 +1181,15 @@ void* exstage(void *x ){
 	}
 
 	int i;
-	ALU(regifid.instruction1,regidex.instruction1,final_op1,final_op2,aluctr,regexmem.aluresult2, &(regexmem.zero2)) ;
+	ALU(regidex.pc1,regidex.instruction1,final_op1,final_op2,aluctr,regexmem.aluresult2, &(regexmem.zero2)) ;
+	
 	if((aluctr[3]==6 && aluctr[2]==6 && aluctr[1]==6 && aluctr[0]==6)|| (aluctr[3]==6 && aluctr[2]==6 && aluctr[1]==6 && aluctr[0]==7)|| (aluctr[3]==7 && aluctr[2]==7 && aluctr[1]==7 && aluctr[0]==7)){
-		regexmem.pcadd2 = binary_to_int(regexmem.aluresult2); //jump variations
+		regexmem.pcadd2 = instrMemoryIndex(binary_to_int(regexmem.aluresult2)); //jump variations
+		printf("....pcadd2: %x\n",regexmem.pcadd2);
 	}
-	else{ regexmem.pcadd2= regidex.pc1 + binary_to_int(regidex.constantext1);} //take care of offset
+	else{ 
+		regexmem.pcadd2= regidex.pc1 + binary_to_int(regidex.constantext1);
+	} //take care of offset
 	copy_oper(op2,regexmem.memwritedata2); // for str
 	
 	
@@ -1157,6 +1199,7 @@ void* exstage(void *x ){
 	
 	else if(regidex.ex1.regdst==1){
 		copy_reg(regidex.rd1,regexmem.regwriteaddr2);
+		// printf("here==> %x\n", bin5_to_int(regidex.rd1));
 	}
 }
 
@@ -1259,6 +1302,7 @@ int binary_to_int1(int a[5]){//converts 5 bit binary to int
 }
 
 void* wbstage(void *x ){//thread calls for write back
+
 	if(regmemwb.wb1.mem2r==0){
 		copy_oper(regmemwb.aluresult1,opglobal);
 	}
@@ -1275,9 +1319,12 @@ void* wbstage(void *x ){//thread calls for write back
 		int fun[6]; 
 		first6(regmemwb.instruction1,fun);
 		if(bin6_to_int(opp)==0 && bin6_to_int(fun)==9){
-			register_write(bin5_to_int(regmemwb.regwriteaddr1),regexmem.instruction1);
+			int temp32[32];
+			int_to_bin32((regexmem.pc1 + 1048576)*4, temp32);
+			register_write(bin5_to_int(regmemwb.regwriteaddr1),temp32);
 		}
 		else{
+			// printf("reg: %d %x\n",bin5_to_int(regmemwb.regwriteaddr1),binary_to_int(opglobal));
 			register_write(bin5_to_int(regmemwb.regwriteaddr1),opglobal);
 		}
 	}
@@ -1326,6 +1373,7 @@ void pendingWrites(){
 	writeback_equal(&(regexmem.wb1) ,&(regexmem.wb2));
 	copy_reg(regexmem.regwriteaddr2 ,regexmem.regwriteaddr1);
 	regexmem.pcadd1 = regexmem.pcadd2;
+	regexmem.pc1 = regexmem.pc2;
 	regexmem.nop1 = regexmem.nop2;
 	
 	if(regexmem.nop1 == false && regexmem.zero1 == 1 && regexmem.m1.branchmem==1){
@@ -1433,6 +1481,8 @@ void initialize(){
 	initialize_oper(regexmem.instruction2);
 	regexmem.zero1=0;
 	regexmem.zero2=0;
+	regexmem.pc1=0;
+	regexmem.pc2=0;
 	regexmem.pcadd1=0;
 	regexmem.pcadd2=0;
 	initialize_oper(regexmem.aluresult1);
@@ -1772,7 +1822,7 @@ printDebug(){
 }
 
 int instMemAnswer(int index){
-	int x = (index*4 + 419304); return x;
+	int x = ((index+ 1048576)*4); return x;
 }
 
 void printResults(){
@@ -1813,11 +1863,11 @@ void goProcessor(){
 	while(true){
 		scanf (" %s", str);
 		if (strcmp(str, strStep) == 0){
-			if (regifid.pc2 >= numofinstructions + 5) {
-				printf("Instructions Finished!\n");
-				printResults();
-				exit(0);
-			}
+			// if (regifid.pc2 >= numofinstructions + 5) {
+			// 	printf("Instructions Finished!\n");
+			// 	printResults();
+			// 	exit(0);
+			// }
 			processor();
 			numOfCycles++;
 		}
