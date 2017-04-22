@@ -13,13 +13,13 @@ int main(argc, argv)
   char **argv;
 {
   parse_args(argc, argv);
-  printf("here-1\n");
+  // printf("here-1\n");
   init_cache();
-  printf("here-2\n");
+  // printf("here-2\n");
   play_trace(traceFile);
-  printf("here-3\n");
+  // printf("here-3\n");
   print_stats();
-  printf("here-4\n"); 
+  // printf("here-4\n"); 
 }
 
 /************************************************************/
@@ -139,6 +139,7 @@ void play_trace(inFile)
 
   num_inst = 0;
   while(read_trace_element(inFile, &access_type, &addr)) {
+  
     switch (access_type) {
     case TRACE_DATA_LOAD:
     case TRACE_DATA_STORE:
@@ -151,9 +152,11 @@ void play_trace(inFile)
     }
 
     num_inst++;
+
     if (!(num_inst % PRINT_INTERVAL))
       printf("processed %d references\n", num_inst);
   }
+
 
   flush();
 }
@@ -166,16 +169,17 @@ int read_trace_element(inFile, access_type, addr)
 {
   int result;
   char c;
-
   result = fscanf(inFile, "%u %x%c", access_type, addr, &c);
   while (c != '\n') {
     result = fscanf(inFile, "%c", &c);
     if (result == EOF) 
       break;
   }
-  if (result != EOF)
-    return(1);
+  
+  if (result != EOF) {
+      return(1);
+  }  
   else
-    return(0);
+  return(0);
 }
 /************************************************************/

@@ -2,7 +2,6 @@
  * cache.c
  */
 
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
@@ -83,12 +82,12 @@ int ceilDiv (int a, int b){
 /************************************************************/
 void init_cache()
 {
-	if (cache_split == 0) cache1.size = cache_usize; else   cache1.size = cache_dsize; 
+	if (cache_split == 0) cache1.size = (cache_usize)/WORD_SIZE; else   cache1.size = (cache_dsize)/WORD_SIZE; 
 	cache1.associativity = cache_assoc;
-	cache1.n_sets = ceilDiv(ceilDiv(cache1.size, cache_block_size), cache_assoc);
+	cache1.n_sets = ceilDiv(ceilDiv(cache1.size*WORD_SIZE, cache_block_size), cache_assoc);
 	int numOfIndexBits = LOG2(cache1.n_sets);
 	int blockOffsetBits = LOG2(cache_block_size);
-	cache1.index_mask_offset = blockOffsetBits + 2 ; // 2 for byte offset in a word.
+	cache1.index_mask_offset = blockOffsetBits ;
 	unsigned p=0;
 	int i;
 	for (i=0; i< numOfIndexBits; i++) p = p*2 + 1;
@@ -104,16 +103,16 @@ void init_cache()
 	}
 	cache1.contents = 0;
 
-	printf("Cache Variables\n");
-	printf("ass: %d nsets:%d maskOffset:%d indexBits: %d mask:%x \n",cache1.associativity, cache1.n_sets,cache1.index_mask_offset,numOfIndexBits ,cache1.index_mask );
+	// printf("Cache Variables\n");
+	// printf("ass: %d nsets:%d maskOffset:%d indexBits: %d mask:%x \n",cache1.associativity, cache1.n_sets,cache1.index_mask_offset,numOfIndexBits ,cache1.index_mask );
 
 	if (cache_split==1) {
-		cache2.size = cache_isize;
+		cache2.size = (cache_isize)/WORD_SIZE;
 		cache2.associativity = cache_assoc;
-		cache2.n_sets = ceilDiv(ceilDiv(cache2.size, cache_block_size), cache_assoc);
+		cache2.n_sets = ceilDiv(ceilDiv(cache2.size*WORD_SIZE, cache_block_size), cache_assoc);
 		
 		int blockOffsetBits = LOG2(cache_block_size);
-		cache2.index_mask_offset = blockOffsetBits + 2 ; // 2 for byte offset in a word.
+		cache2.index_mask_offset = blockOffsetBits ; // 2 for byte offset in a word.
 		
 		int numOfIndexBits2 = LOG2(cache2.n_sets);
 		
@@ -151,11 +150,12 @@ void init_cache()
 void perform_access(addr, access_type)
   unsigned addr, access_type;
 {
+int wordsInBlock = (cache_block_size/WORD_SIZE);
   /* handle an access to the cache */
-	printf("Access %d\n",access_type);
 	if (access_type == TRACE_DATA_LOAD){ //data read
+		cache1_stat.accesses ++;
 		int miss = 0; // 0-> not set; 1 -> miss; 2->hit
-		unsigned idx= (addr && cache1.index_mask) >> cache1.index_mask_offset; 
+		unsigned idx= (addr & cache1.index_mask) >> cache1.index_mask_offset;
 		unsigned mytag = addr >> cache1.index_mask_offset;
 		
 		if (idx > cache1.n_sets) {
@@ -164,7 +164,7 @@ void perform_access(addr, access_type)
 		}
 		
 		if (cache1.LRU_head[idx] == NULL) { // empty set
-			printf("Empty\n");
+			// printf("Empty\n");
 			miss = 1;
 
 			Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
@@ -172,8 +172,7 @@ void perform_access(addr, access_type)
 			newBlock->dirty = 0; 
 			// newBlock -> data = mem[] ; $
 			insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
-			
-			cache1_stat.accesses ++;
+		
 			cache1_stat.misses ++;
 			cache1_stat.demand_fetches++;
 
@@ -188,6 +187,7 @@ void perform_access(addr, access_type)
 					miss = 2;
 					// $ return data from cache
 					// to maintain cache replacement policy
+					// printf("hit\n");
 					delete( &cache1.LRU_head[idx], &cache1.LRU_tail[idx],ptr );
 					insert( &cache1.LRU_head[idx], &cache1.LRU_tail[idx],ptr );
 					break;
@@ -197,37 +197,29 @@ void perform_access(addr, access_type)
 			
 			if (miss != 2) { // miss
 				miss = 1;
+				Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
+				newBlock->tag = mytag;
+				newBlock->dirty = 0; 
 				if (cache1.set_contents[idx] == cache1.associativity) { // replace
-					printf("Miss with replace\n");
+					// printf("Miss with replace\n");
 					// remove the last element in the cache line
 					if (cache1.LRU_tail[idx]->dirty==1){
 						// update the contents in memory
-						cache1_stat.accesses ++;
-						cache1_stat.copies_back++;
+						cache1_stat.copies_back+= wordsInBlock;
 					}
 					delete(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],cache1.LRU_tail[idx]);
 
-					Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
-					newBlock->tag = mytag;
-					newBlock->dirty = 0; 
 					// $ add data
 					insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
 
-					cache1_stat.accesses ++;
 					cache1_stat.misses++;
 					cache1_stat.replacements++;
 					cache1_stat.demand_fetches++;
 				}
 				else{ // insert 
-					printf("Miss with insert\n");
-
-					Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
-					newBlock->tag = mytag;
-					newBlock->dirty = 0; 
+					// printf("Miss with insert\n");
 					// $ add data
-					insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
-
-					cache1_stat.accesses ++;
+					insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);					
 					cache1_stat.misses++;
 					cache1_stat.demand_fetches++;
 					cache1.set_contents[idx]++;
@@ -238,8 +230,10 @@ void perform_access(addr, access_type)
 	}
 	
 	else if (access_type == TRACE_DATA_STORE){ // data store
-		int miss = 0;
-		unsigned idx= (addr && cache1.index_mask) >> cache1.index_mask_offset; 
+		cache1_stat.accesses ++;
+		
+		int miss = 1;
+		unsigned idx= (addr & cache1.index_mask) >> cache1.index_mask_offset; 
 		unsigned mytag = addr >> cache1.index_mask_offset;
 		
 		Pcache_line ptr = cache1.LRU_head[idx];
@@ -250,44 +244,84 @@ void perform_access(addr, access_type)
 			}
 			ptr= ptr -> LRU_next;
 		}
-
 		if (miss == 1){ // miss
 			if (cache_writealloc == 1){
 				// $change in memory content
-				Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
-				newBlock->tag = mytag;
-				newBlock->dirty = 0; 
+				if (cache_writeback==1){
+					Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
+					newBlock->tag = mytag;
+					newBlock->dirty = 1;
 
-				cache1_stat.accesses++;
-				cache1_stat.misses++;
-				cache1_stat.demand_fetches++;
-				cache1_stat.copies_back++;
+					if (cache1.set_contents[idx] == cache1.associativity) { // replace
+						// printf("miss: writealloc with replace %d %d\n", cache1.associativity,cache1.set_contents[idx] );
+						if (cache1.LRU_tail[idx]->dirty == 1){
+							// write in the memory to reflect the changes, tail will contain the data						
+							cache1_stat.copies_back+=wordsInBlock;
 
-				if (cache1.set_contents[idx] == cache1.associativity) { // replace
-					if (cache1.LRU_tail[idx]->dirty == 1){
-						// write in the memory to reflect the changes, tail will contain the data
-						cache1_stat.accesses++;
+						}
+
+						delete(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],cache1.LRU_tail[idx]);
+						insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
+						
+						cache1_stat.misses++;
+						cache1_stat.replacements++;
+						cache1_stat.demand_fetches++;
+					}
+					else{ // insert 
+						// printf("miss: writealloc with insert\n");
+						
+						insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
+						cache1.set_contents[idx]++;
+						cache1.contents++;
+						
+						cache1_stat.misses++;
+						cache1_stat.demand_fetches++;
+					}		
+				}
+				else { /*write allocate with no writeback in miss*/
+					// printf("write miss wa wthrough\n");
+					Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
+					newBlock->tag = mytag;
+					newBlock->dirty = 0;
+
+					if (cache1.set_contents[idx] == cache1.associativity) { // replace
+						// printf("miss: writealloc with replace %d %d\n", cache1.associativity,cache1.set_contents[idx] );
+						delete(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],cache1.LRU_tail[idx]);
+						insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
+						
+						cache1_stat.misses++;
+						cache1_stat.replacements++;
+						cache1_stat.demand_fetches++;
 						cache1_stat.copies_back++;
 					}
+					else{ // insert 
+						// printf("miss: writealloc with insert\n");
+						
+						insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
+						cache1.set_contents[idx]++;
+						cache1.contents++;
+						
+						cache1_stat.misses++;
+						cache1_stat.demand_fetches++;
+						cache1_stat.copies_back++;
+					}	
 
-					delete(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],cache1.LRU_tail[idx]);
-					insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
-					cache1_stat.replacements++;
-				}
-				else{ // insert 
-					insert(&cache1.LRU_head[idx],&cache1.LRU_tail[idx],newBlock);
-					cache1.set_contents[idx]++;
-					cache1.contents++;
 				}
 			}
+
 			else { // no write allocate
-				// change in memory
-				cache1_stat.accesses++;
-				cache1_stat.misses++;
-				cache1_stat.copies_back++;	
+				if (cache_writeback==1){
+					cache1_stat.misses++;
+					cache1_stat.copies_back++;
+				}
+				else{ // with no write back
+					cache1_stat.misses++;
+					cache1_stat.copies_back++;	
+				}
 			}
 		}
 		else { // hit
+			// printf("hit\n");
 			// for block replacement policy
 			delete( &cache1.LRU_head[idx], &cache1.LRU_tail[idx],ptr );
 			insert( &cache1.LRU_head[idx], &cache1.LRU_tail[idx],ptr );
@@ -298,40 +332,40 @@ void perform_access(addr, access_type)
 			}
 			else { //write through
 				 // $change contents in cache and memory
-				cache1_stat.accesses++ ;
 				cache1_stat.copies_back++ ;
 			}
 		}
 	}
 
-	else { //data read
+	else { //instruction read
 		if (cache_split == 0){ cachePtr = (&cache1);} else cachePtr = (&cache2);
 		if (cache_split == 0){ cacheStatPtr = (&cache1_stat);} else cacheStatPtr = (&cache2_stat);
 		
+		(cache2_stat.accesses)++;
 		int miss = 0; // 0-> not set; 1 -> miss; 2->hit
-		unsigned idx= (addr && cachePtr->index_mask) >> cachePtr->index_mask_offset; 
-		unsigned mytag = addr >> cachePtr->index_mask_offset;
-		
+		unsigned idx= (addr & cachePtr->index_mask) >> (cachePtr->index_mask_offset);
+		// printf("%x %x %x %x\n",addr, cachePtr->index_mask,(addr & cachePtr->index_mask), idx);
+		unsigned mytag = addr >> (cachePtr->index_mask_offset);
+		// printf("idx:%x mytag:%x\n",idx, mytag );
 		if (idx > cachePtr->n_sets) {
 			printf("$Error\n");
 			return;
 		}
 		
 		if (cachePtr->LRU_head[idx] == NULL) { // empty set
+			// printf("Empty\n");
 			miss = 1;
-
 			Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
 			newBlock->tag = mytag;
 			newBlock->dirty = 0; 
 			// newBlock -> data = mem[] ; $
 			insert(&(cachePtr->LRU_head[idx]),&(cachePtr->LRU_tail[idx]),newBlock);
 			
-			cacheStatPtr->accesses ++;
-			cacheStatPtr->misses ++;
-			cacheStatPtr->demand_fetches ++;
+			(cache2_stat.misses) ++;
+			(cacheStatPtr->demand_fetches)++;
 
+			(cachePtr->contents) ++;			
 			cachePtr->set_contents[idx] = 1;
-			cachePtr->contents ++;			
 		}
 		else {
 			Pcache_line ptr = cachePtr->LRU_head[idx];
@@ -341,6 +375,7 @@ void perform_access(addr, access_type)
 					miss = 2;
 					// $ return data from cache
 					// to maintain cache replacement policy
+					// printf("hit\n");
 					delete( &cachePtr->LRU_head[idx], &cachePtr->LRU_tail[idx],ptr );
 					insert( &cachePtr->LRU_head[idx], &cachePtr->LRU_tail[idx],ptr );
 					break;
@@ -350,57 +385,58 @@ void perform_access(addr, access_type)
 			
 			if (miss != 2) { // miss
 				miss = 1;
-				if (cachePtr->set_contents[idx] == cachePtr->associativity) { // replace
+				if ((cachePtr->set_contents)[idx] == cachePtr->associativity) { // replace
+					// printf("Miss with replace\n");
 					// remove the last element in the cache line
-					if (cachePtr->LRU_tail[idx]->dirty==1){
+					if ((cachePtr->LRU_tail)[idx]->dirty==1){
 						// update the contents in memory
-						cacheStatPtr->accesses ++;
-						cacheStatPtr->copies_back++;
+						(cacheStatPtr->copies_back)+=wordsInBlock;
 					}
-					delete(&cachePtr->LRU_head[idx],&cachePtr->LRU_tail[idx],cachePtr->LRU_tail[idx]);
+					delete(&(cachePtr->LRU_head[idx]),&(cachePtr->LRU_tail[idx]),cachePtr->LRU_tail[idx]);
 
 					Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
 					newBlock->tag = mytag;
 					newBlock->dirty = 0; 
 					// $ add data
-					insert(&cachePtr->LRU_head[idx],&cachePtr->LRU_tail[idx],newBlock);
+					insert(&(cachePtr->LRU_head[idx]),&(cachePtr->LRU_tail[idx]),newBlock);
 
-					cacheStatPtr->accesses ++;
-					cacheStatPtr->misses++;
-					cacheStatPtr->replacements++;
+					
+					cache2_stat.misses++;
+					cache2_stat.replacements++;
 					cacheStatPtr->demand_fetches++;
 				}
 				else{ // insert 
+					// printf("Miss with insert\n");
+
 					Pcache_line newBlock = (Pcache_line) malloc(sizeof(cache_line));
 					newBlock->tag = mytag;
 					newBlock->dirty = 0; 
 					// $ add data
-					insert(&cachePtr->LRU_head[idx],&cachePtr->LRU_tail[idx],newBlock);
-
-					cacheStatPtr->accesses ++;
-					cacheStatPtr->misses++;
+					insert(&(cachePtr->LRU_head[idx]),&(cachePtr->LRU_tail[idx]),newBlock);
+					
+					cache2_stat.misses++;
 					cacheStatPtr->demand_fetches++;
 					cachePtr->set_contents[idx]++;
 					cachePtr->contents++;
 				}
-
 			}
 		}
 	}
+	// printf("..%d %d\n", cache1_stat.copies_back, cache2_stat.copies_back);
 
 }
 /************************************************************/
 
 /************************************************************/
+
 void flush()
 {
 	int i;
 	for (i=0; i< cache1.n_sets; i++){
 		while (cache1.LRU_head[i] !=NULL){
 			if (cache1.LRU_tail[i]->dirty == 1){
-				// reflect the changes in meme
-				cache1_stat.accesses++;
-				cache1_stat.copies_back++;
+				// reflect the changes in memory
+				cache1_stat.copies_back+=(cache_block_size/WORD_SIZE);
 				cache1.set_contents[i]--;
 				cache1.contents--;
 			}
@@ -413,8 +449,7 @@ void flush()
 			while (cache2.LRU_head[i] !=NULL){
 				if (cache2.LRU_tail[i]->dirty == 1){
 					// reflect the changes in meme
-					cache2_stat.accesses++;
-					cache2_stat.copies_back++;
+					cache2_stat.copies_back+= (cache_block_size/WORD_SIZE);
 					cache2.set_contents[i]--;
 					cache2.contents--;
 				}
@@ -514,10 +549,13 @@ void print_stats()
 	 1.0 - (float)cache1_stat.misses / (float)cache1_stat.accesses);
   printf("  replace:   %d\n", cache1_stat.replacements);
 
+// static int cache_block_size = DEFAULT_CACHE_BLOCK_SIZE;
+// static int words_per_block = DEFAULT_CACHE_BLOCK_SIZE / WORD_SIZE;
+
   printf(" TRAFFIC (in words)\n");
-  printf("  demand fetch:  %d\n", cache2_stat.demand_fetches + 
-	 cache1_stat.demand_fetches);
-  printf("  copies back:   %d\n", cache2_stat.copies_back +
-	 cache1_stat.copies_back);
+  printf("  demand fetch:  %d\n", ((cache2_stat.demand_fetches) + 
+  	 cache1_stat.demand_fetches)*(cache_block_size/WORD_SIZE));
+  printf("  copies back:   %d\n", (cache2_stat.copies_back +
+  	 cache1_stat.copies_back));
 }
 /************************************************************/
