@@ -1,5 +1,7 @@
 						***** README ***** 
 
+Processor:
+
 1.We have assumed that for lw and sw memory address is multiple of 32
 2.We have assumed that for lb and sb memory address is multiple of 8
 3.We have assumed memory size=64 MB(approx)
@@ -9,3 +11,36 @@ for 2 cycles and then read instruction from the instruction memory
 6.We have assumed that the instruction in case the program does not come to a hault but the instrcutions have finished (like in the case of a branch at the end), we still consider the processor tries to access the instructions and included those in the Instruction Cache Access Count.
 7.We have put a third data forwarding path as well (not mentioned in the book) to take of store followed by add with a data dependency. 
 8.We have highlighted all the control signals in a relevant pipeline stage (As mentioned on Piazza).
+
+
+Cache:
+
+Input Units:
+Cache Size in Bytes(later is stored in the program as words).
+Block Size in Bytes.
+Latency is given in (ns).
+Cache size should be divisible by word size.
+Complete sets should be formed.
+The Number of Sets formed should be powers of two.
+The Block Size formed should be powers of two.
+
+
+User Tools:
+Two Continue will lead to execution.
+
+
+While Reading CFG Files:
+1. Any number of parameters from the give template of parameters can be specified. Rest will assume the default values as:
+	WORD_SIZE 4
+	WORD_SIZE_OFFSET 2
+	DEFAULT_CACHE_SIZE (8 * 1024) bytes
+	DEFAULT_CACHE_BLOCK_SIZE 16 bytes
+	DEFAULT_CACHE_ASSOC 1
+	DEFAULT_CACHE_WRITEBACK TRUE
+	DEFAULT_CACHE_WRITEALLOC TRUE
+	DEFAULT_FREQ 2
+	DEFAULT_LATENCY 45
+2. Latency is assumed to be an integer.
+
+
+Cache address starts from zero.

@@ -4,12 +4,16 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include "draw.h"
+#include "cache.h"
+#include <stdbool.h>
 
 #define MEMSIZE 16000000 
 #define INSTSIZE 16000
 #define STALLOFFSET 4 // 4 for start
 
 int instMem[INSTSIZE][32]; // instruction memory
+bool brkPts[INSTSIZE]; // instruction memory
+
 char *image_file;
 char *output_file;
 
@@ -23,7 +27,7 @@ int excessCount= 0; // for if stage fetching instructions beyond numofinstructio
 
 int opglobal[32];//global variable to store output of multiplexer in write back 
 bool stallIfId = false;
-	
+
 int regMem[32][32];
 int dataMem[MEMSIZE][32];
 int Hi[32]; int Lo[32]; // 2 special registers for mul and mla
@@ -35,6 +39,24 @@ pthread_t callThd[6];
 // hazard signals
 int ifidwrite, pcwrite, controlmultiplex;
 
+/************/
+// functions for making calls to the cache
+void instrAccess(int idx){
+	perform_access((idx)*4,2);
+}
+
+void memWrite(int idx){
+	printf("======>w: %x\n",idx*4);
+	perform_access(idx*4,1);
+}
+
+void memRead(int idx){
+	printf("======>r: %x\n",idx*4);
+	perform_access(idx*4,0);
+}
+/************/
+
+
 int dataMemoryIndex(int offset){
 	int val= 67125248;
 	int idx = offset - val;
@@ -45,10 +67,15 @@ int dataMemoryIndex(int offset){
 	return idx; 
 }
 
+// subtracts the offset
 int instrMemoryIndex(int idx1){
 	int val = 1048576;
 	if (idx1 < val){
 		printf("Invalid Instruction Address. %d\n", idx1);
+		exit(0);
+	}
+	if (idx1-val >= INSTSIZE){
+		printf("Please Enter an Instruction Address Within the Valid Range.\n");
 		exit(0);
 	}
 	else {
@@ -94,7 +121,7 @@ struct idexst{
 	bool nop1;
 	bool nop2;
 
-	wb wb1 ; 
+	wb wb1; 
 	wb wb2;
 	mem m1;
 	mem m2;
@@ -286,6 +313,8 @@ void* ifstage(void *x ){ //thread calls this function for if
 	regifid.pc2= pcx + 1;
 	if (pcx >= numofinstructions) regifid.nop2= true;
 	else regifid.nop2= false;
+
+	if (regifid.nop2 == false && stallIfId==false) instrAccess(pcx);
 }
 
 int bin6_to_int(int a[6])//convert binary 6 bit to int
@@ -347,7 +376,6 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		if(binary_to_int2(fun)==9 || binary_to_int2(fun)==8){
 			memo->branchmem=1;
 			//ex->link=1;
-			printf("here-1\n");
 		}
 		else{
 			memo->branchmem=0;
@@ -357,8 +385,7 @@ void controller(int ins1[32],int ins[6],mem* memo,wb* wbo,alu* ex)
 		wbo->mem2r=0;
 		if(binary_to_int2(fun)==24 || binary_to_int2(fun)==8){ // mul
 			wbo->regwr=0;
-			printf("here-1.1\n");
-
+		
 		}
 		else{ // not mult
 			wbo->regwr=1;
@@ -645,8 +672,7 @@ void* idstage(void *x ){	//thread calls this function in idstage
 	int op1[5];
 	instruction_to_register(regifid.instruction1,op1,21); // puts 21 to 25 in op1
 	copy_register_value(regidex.operanda2,bin5_to_int(op1)); // fetches values from reg file
-	printf("ins:%x op:%x, %x \n", binary_to_int(regifid.instruction1),bin5_to_int(op1),binary_to_int(regidex.operanda2));
-
+	
 	int op2[5];
 	instruction_to_register(regifid.instruction1,op2,16);//puts 16 to 20 in op2
 	copy_register_value(regidex.operandb2,bin5_to_int(op2));//fetches value from reg file
@@ -760,7 +786,6 @@ void Alu_control(int func[6],int aluop[2],int alucontrol[4])//check aluopbits an
 		}
 		else if(binary_to_int2(func)==8){
 			alucontrol[3]=7;alucontrol[2]=7;alucontrol[1]=7;alucontrol[0]=7;       //7777 for jump register
-			printf("here-3\n");
 		}
 		else {
 			printf("Error:Invalid Instruction. %d\n",binary_to_int2(func));
@@ -999,7 +1024,7 @@ void ALU(int next_ins_addr,int ins[32],int op1[32],int op2[32],int ctr[4],int re
 		int k1=bin32_to_int_signed(op1);
 		int k2=bin32_to_int_signed(op2);
 		int result1[64];
-		int_signed_to_bit32(k1*k2,result1);
+		int_signed_to_bit64(k1*k2,result1);
 		int s;
 		for(s=0;s<32;s++) Lo[s]=result1[s];
 		for(s=32;s<64;s++) Hi[s-32]=result1[s];
@@ -1117,13 +1142,11 @@ void ALU(int next_ins_addr,int ins[32],int op1[32],int op2[32],int ctr[4],int re
 		int_to_bin32(binary_to_int(op1)/4,temp);
 		copy_oper(temp,result);
 		*zero=1;
-		printf("op1 %x  result %x\n", binary_to_int(op1), binary_to_int(result));
 	}
 	
 }
  
 void* exstage(void *x ){
-	printf("ins:%x\n", binary_to_int(regidex.instruction1));
 
 	regexmem.nop2= regidex.nop1;
 	regexmem.pc2= regidex.pc1;
@@ -1185,7 +1208,6 @@ void* exstage(void *x ){
 	
 	if((aluctr[3]==6 && aluctr[2]==6 && aluctr[1]==6 && aluctr[0]==6)|| (aluctr[3]==6 && aluctr[2]==6 && aluctr[1]==6 && aluctr[0]==7)|| (aluctr[3]==7 && aluctr[2]==7 && aluctr[1]==7 && aluctr[0]==7)){
 		regexmem.pcadd2 = instrMemoryIndex(binary_to_int(regexmem.aluresult2)); //jump variations
-		printf("....pcadd2: %x\n",regexmem.pcadd2);
 	}
 	else{ 
 		regexmem.pcadd2= regidex.pc1 + binary_to_int(regidex.constantext1);
@@ -1233,11 +1255,9 @@ void load_byte(int a,int offset,int result[32]){
 
 void store_byte(int a,int offset,int result[32]){
 	int s;
-	
 	for(s=0;s<8;s++){
 		dataMem[dataMemoryIndex(a)][(offset*8)+s]=result[s];
 	}
-
 }
 
 void* memstage(void *x ){
@@ -1257,8 +1277,11 @@ void* memstage(void *x ){
 			int s=binary_to_int(regexmem.aluresult1);
 			load_byte((s/4),(s%4),regmemwb.readdata2);	
 		}
-		else{
-		data_read((binary_to_int(regexmem.aluresult1)/4),regmemwb.readdata2);}
+		else
+		{
+			data_read((binary_to_int(regexmem.aluresult1)/4),regmemwb.readdata2);
+		}
+		if (regexmem.nop1==false) memRead((binary_to_int(regexmem.aluresult1)/4));
 	}
 	copy_reg(regexmem.regwriteaddr1,regmemwb.regwriteaddr2);
 	copy_oper(regexmem.aluresult1,regmemwb.aluresult2);
@@ -1269,7 +1292,7 @@ void* memstage(void *x ){
 	else{
 		copy_oper(regexmem.memwritedata1,mwr);
 		int l=0;
-		}
+	}
 	if(regexmem.m1.memwr==1 ){
 		if(k==40){ // store byte
 			int s=binary_to_int(regexmem.aluresult1);
@@ -1278,6 +1301,7 @@ void* memstage(void *x ){
 		else{
 			data_write((binary_to_int(regexmem.aluresult1)/4),mwr);
 		}	
+		if (regexmem.nop1 == false) memWrite(binary_to_int(regexmem.aluresult1)/4);
 	}
 }
 
@@ -1320,7 +1344,7 @@ void* wbstage(void *x ){//thread calls for write back
 		first6(regmemwb.instruction1,fun);
 		if(bin6_to_int(opp)==0 && bin6_to_int(fun)==9){
 			int temp32[32];
-			int_to_bin32((regexmem.pc1 + 1048576)*4, temp32);
+			int_to_bin32((regexmem.pc1 + 1048576 - 1)*4, temp32);
 			register_write(bin5_to_int(regmemwb.regwriteaddr1),temp32);
 		}
 		else{
@@ -1427,6 +1451,7 @@ void initialize_wb(wb* write)
 
 void init_mem(){
 	int i,j;
+	for (i=0; i< INSTSIZE; i++) brkPts[i] = false;
 	for (i= numofinstructions; i< INSTSIZE; i++){
 		for (j=0; j< 32; j++){
 			instMem[i][j]= 0;
@@ -1447,7 +1472,8 @@ void init_mem(){
 
 void initialize(){
 	init_mem();
-	
+	configCache();
+
 	initialize_oper(regifid.instruction1);
 	initialize_oper(regifid.instruction2);
 	regifid.pc1=0;
@@ -1521,17 +1547,11 @@ void* updateSVG(void* ptr){
 
 int processor(){
 	//pending writes in pipeline registers
-	
+	numOfCycles++;
 	datahazardcalculate();
 	forwardingcalculate();
 	pendingWrites();
 	controlhazardcalculate();
-
-	 // wbstage(NULL);
-	 // ifstage(NULL);
-	 // idstage(NULL);
-	 // exstage(NULL);
-	 // memstage(NULL);
 
 	pthread_attr_t attr;
 	void *status;
@@ -1809,13 +1829,11 @@ printDebug(){
 	
 	printf("reg Write Addr\n");
 	for (i=0; i < 5; i++){
-		//if (i%4==0)printf(" ");
 		printf("%d",regmemwb.regwriteaddr1[i]);	
 	}
 	printf("\n");
 
 	for (i=0; i < 5; i++){
-		//if (i%4==0)printf(" ");
 		printf("%d",regmemwb.regwriteaddr2[i]);	
 	}
 	printf("\n");
@@ -1826,31 +1844,36 @@ int instMemAnswer(int index){
 }
 
 void printResults(){
+	flush();
+	// printf("Cache Flushed\n");
 	numOfCycles--;
 	excessCount-=5; // removing the last instruction excess
+	
 	int idleCycles = numOfDataStalls + numOfControlStalls + STALLOFFSET;
 	int instAccess = numOfCycles - numOfDataStalls - STALLOFFSET; // 4-> for ending stalls
 	int numofinstructions1= instAccess - numOfControlStalls;
+	
 	FILE* resfp = fopen(output_file, "w");
+	
 	fprintf(resfp,"Instructions,%d\n",numofinstructions1);
 	fprintf(resfp,"Cycles,%d\n",numOfCycles);
 	fprintf(resfp,"IPC,%.4f\n", ((float)numofinstructions1)/numOfCycles);
-	if (numOfCycles%2==0) fprintf(resfp,"Time (ns),%d\n",numOfCycles/2);
-	else fprintf(resfp,"Time (ns),%.4f\n",0.5*numOfCycles);
-	if (idleCycles%2==0) fprintf(resfp,"Idle time (ns),%d\n",idleCycles/2);
-	else fprintf(resfp,"Idle time (ns),%.4f\n",0.5*idleCycles);
-	fprintf(resfp,"Idle time (%%),%.4f%%\n", (idleCycles*100.0) /numOfCycles);
-	fprintf(resfp,"Cache Summary\nCache L1-I\nnum cache accesses,%d\nCache L1-D\nnum cache accesses,%d\n",instAccess- excessCount, memAccess);
+	
+	printResultsCache(resfp,numOfCycles, idleCycles, instAccess, excessCount, memAccess);
 	fclose(resfp);
+}
+
+bool programFinish(){
+	if (regifid.pc2 >= numofinstructions + 5) {
+		printf("Instructions Finished!\n");
+		printResults();
+		return true;
+	}
+	return false;
 }
 
 void goProcessor(){
 	initialize();
-/*	int_to_bin32(12,regMem[12]);
-	int_to_bin32(5,regMem[5]);
-	int_to_bin32(4,regMem[4]);
-	int_to_bin32(0,dataMem[6]);
-	int_to_bin32(-17,regMem[11]);*/
 	char str[50];
 	int *brkaddr;
 	char* strStep= "step";
@@ -1859,24 +1882,52 @@ void goProcessor(){
 	char* strBrk= "break";
 	char* strDel= "delete";  
 	char* strCon= "continue"; 
+	char* strRun= "run"; 
 	int i,j;
 	while(true){
 		scanf (" %s", str);
 		if (strcmp(str, strStep) == 0){
-			// if (regifid.pc2 >= numofinstructions + 5) {
-			// 	printf("Instructions Finished!\n");
-			// 	printResults();
-			// 	exit(0);
-			// }
+			if (programFinish()) exit(0);
 			processor();
-			numOfCycles++;
 		}
-		// else if(strcmp(str, strBrk)==0){
-		// 	scanf("0x%x",&brkaddr);
-		// }
+		else if(strcmp(str, strBrk)==0){
+			int brkaddr;
+			scanf(" 0x%x",&brkaddr);
+			if (brkaddr%4){
+				printf("Please Enter an Address Which is a Multiple of Four.\n");
+				continue;
+			}
+			printf(".%x %d\n",brkaddr, brkaddr/4 );
+			int idx= instrMemoryIndex((brkaddr+4)/4);
+			brkPts[idx] = true;
+			printf("brk:%d %d \n",idx,brkPts[idx]);
+
+		}
 		else if(strcmp(str, strDel)==0){
 			int brdel;
-			scanf("0x%x",&brdel);	
+			scanf(" 0x%x",&brdel);
+			int idx = instrMemoryIndex((brdel+4)/4);
+			if (brkPts[idx]==false){
+				printf("There exists no breakpoint at this location.\n");
+				continue;
+			}	
+			brkPts[idx] =false;
+			printf("del:%d %d \n",idx,brkPts[idx]);
+		}
+		else if (strcmp(str, strCon)==0){
+			bool start = true;
+			while (true){
+				if (programFinish()) exit(0);
+				if (!start && brkPts[regifid.pc2]==true) break; //$$
+				processor();
+				start = false;
+			}
+		}
+		else if (strcmp(str, strRun)==0){
+			while (true){
+				if (programFinish()) exit(0);
+				processor();
+			}
 		}
 		else if (strcmp(str, strMem) == 0){
 			printf("MemDump:\n");
