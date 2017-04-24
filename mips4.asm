@@ -1,0 +1,9 @@
+lui $t9,0x1001
+addi $t1,$t1,10
+addi $t2,$t2,12
+add $t3,$t1,$t2
+add $t4,$t3,$t2
+add $t5,$t3,$t4
+sw $t5,($t9)
+sub $t7,$t3,$t2
+slti $t1,$t7,16
